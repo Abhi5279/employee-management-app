@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # Database Tier: MongoDB
+  # ==========================================
+  mongodb:
+    image: mongo:7.0
+    container_name: employee-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: employeedb
+    ports:
+      - "27017:27017" # Exposed for local debugging/MongoDB Compass
+    volumes:
+      - mongo-data:/data/db # Named volume for persistent data
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ==========================================
+  # Application Backend Tier: Node.js Express API
+  # ==========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: employee-backend
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      PORT: 5000
+      MONGO_URI: mongodb://mongodb:27017/employeedb # Connects securely via service name
+      NODE_ENV: production
+    ports:
+      - "5000:5000"
+    networks:
+      - backend-net   # Allows backend to reach MongoDB
+      - frontend-net  # Allows frontend to reach backend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ==========================================
+  # Client Frontend Tier: React.js + Tailwind (Nginx)
+  # ==========================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: employee-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:80" # Maps host port 3000 to Nginx container port 80
+    networks:
+      - frontend-net # Isolated from database; communicates with backend only
+    environment:
+      - VITE_API_URL=/api
+
+# ==========================================
+# Named Persistent Storage Volumes
+# ==========================================
+volumes:
+  mongo-data:
+    name: employee-mongo-data
+    driver: local
+
+# ==========================================
+# Custom Isolated Networks
+# ==========================================
+networks:
+  frontend-net:
+    name: employee-frontend-network
+    driver: bridge
+  backend-net:
+    name: employee-backend-network
+    driver: bridge
